@@ -3,6 +3,7 @@ import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { router, useLocalSearchParams } from "expo-router";
+import { StatusBar } from "expo-status-bar";
 import { doc, getDoc } from "firebase/firestore";
 import React, {
   useCallback,
@@ -14,6 +15,7 @@ import {
   ActivityIndicator,
   Dimensions,
   FlatList,
+  Modal,
   PanResponder,
   Platform,
   Pressable,
@@ -31,7 +33,6 @@ import { Drama, Episode } from "@/lib/types";
 import { useColors } from "@/hooks/useColors";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
-const VIDEO_H = SCREEN_W * (16 / 9);
 
 export default function PlayerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -44,13 +45,31 @@ export default function PlayerScreen() {
   const [fav, setFav] = useState(false);
   const [loading, setLoading] = useState(true);
   const [resumeTarget, setResumeTarget] = useState<{ epIndex: number; time: number } | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showControls, setShowControls] = useState(true);
+  const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const videoRef = useRef<VideoView>(null);
   const currentEp = episodes[epIndex];
   const videoUri = currentEp?.rawUrl ? buildVideoUrl(currentEp.rawUrl) : undefined;
 
   const player = useVideoPlayer(videoUri ?? null, (p) => {
     p.loop = false;
   });
+
+  // Auto-hide controls after 3s in fullscreen
+  const resetControlsTimer = useCallback(() => {
+    setShowControls(true);
+    if (controlsTimer.current) clearTimeout(controlsTimer.current);
+    if (isFullscreen) {
+      controlsTimer.current = setTimeout(() => setShowControls(false), 3000);
+    }
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    resetControlsTimer();
+    return () => { if (controlsTimer.current) clearTimeout(controlsTimer.current); };
+  }, [isFullscreen]);
 
   // Auto-play when source changes
   useEffect(() => {
@@ -115,6 +134,12 @@ export default function PlayerScreen() {
     [episodes.length]
   );
 
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen((prev) => !prev);
+    resetControlsTimer();
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [resetControlsTimer]);
+
   // Swipe gesture on video: up = next, down = prev
   const swipeStart = useRef(0);
   const panResponder = useRef(
@@ -130,39 +155,21 @@ export default function PlayerScreen() {
     })
   ).current;
 
-  if (loading) {
-    return (
-      <View style={[styles.centered, { backgroundColor: "#000" }]}>
-        <ActivityIndicator color="#0d9488" size="large" />
-      </View>
-    );
-  }
-
-  return (
-    <View style={[styles.container, { paddingTop: Platform.OS === "web" ? 67 : 0 }]}>
-      {/* Video section */}
-      <View style={styles.videoWrap} {...panResponder.panHandlers}>
-        {videoUri ? (
-          <VideoView
-            player={player}
-            style={styles.video}
-            contentFit="contain"
-            nativeControls
-          />
-        ) : (
-          <View style={[styles.video, styles.noVideo]}>
-            <Ionicons name="play-circle-outline" size={64} color="rgba(255,255,255,0.3)" />
-            <Text style={styles.noVideoText}>
-              {episodes.length === 0 ? "Episode belum tersedia" : "Pilih episode"}
-            </Text>
-          </View>
-        )}
-
-        {/* Overlay header */}
-        <LinearGradient colors={["rgba(0,0,0,0.7)", "transparent"]} style={styles.videoHeader}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={10}>
-            <Ionicons name="chevron-back" size={26} color="#fff" />
-          </Pressable>
+  const VideoOverlay = ({ fullscreen = false }: { fullscreen?: boolean }) => (
+    <Pressable style={StyleSheet.absoluteFill} onPress={resetControlsTimer}>
+      {/* Header */}
+      {(showControls || !fullscreen) && (
+        <LinearGradient colors={["rgba(0,0,0,0.8)", "transparent"]} style={styles.videoHeader}>
+          {!fullscreen && (
+            <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={10}>
+              <Ionicons name="chevron-back" size={26} color="#fff" />
+            </Pressable>
+          )}
+          {fullscreen && (
+            <Pressable onPress={toggleFullscreen} style={styles.backBtn} hitSlop={10}>
+              <Ionicons name="chevron-down" size={26} color="#fff" />
+            </Pressable>
+          )}
           <View style={styles.headerCenter}>
             <Text style={styles.headerTitle} numberOfLines={1}>{drama?.title ?? ""}</Text>
             {currentEp && (
@@ -173,18 +180,98 @@ export default function PlayerScreen() {
             <Ionicons name={fav ? "heart" : "heart-outline"} size={24} color={fav ? "#e5534b" : "#fff"} />
           </Pressable>
         </LinearGradient>
+      )}
 
-        {/* Nav arrows */}
-        {epIndex > 0 && (
-          <Pressable style={[styles.navArrow, styles.navLeft]} onPress={() => goEp(epIndex - 1)}>
-            <Ionicons name="chevron-back" size={22} color="#fff" />
+      {/* Fullscreen button bottom-right */}
+      {(showControls || !fullscreen) && (
+        <LinearGradient
+          colors={["transparent", "rgba(0,0,0,0.6)"]}
+          style={styles.videoFooter}
+        >
+          {epIndex > 0 && (
+            <Pressable style={styles.footerBtn} onPress={() => goEp(epIndex - 1)} hitSlop={8}>
+              <Ionicons name="play-skip-back" size={20} color="#fff" />
+            </Pressable>
+          )}
+          <View style={{ flex: 1 }} />
+          {epIndex < episodes.length - 1 && (
+            <Pressable style={styles.footerBtn} onPress={() => goEp(epIndex + 1)} hitSlop={8}>
+              <Ionicons name="play-skip-forward" size={20} color="#fff" />
+            </Pressable>
+          )}
+          <Pressable style={styles.footerBtn} onPress={toggleFullscreen} hitSlop={8}>
+            <Ionicons
+              name={fullscreen ? "contract" : "expand"}
+              size={20}
+              color="#fff"
+            />
           </Pressable>
+        </LinearGradient>
+      )}
+    </Pressable>
+  );
+
+  if (loading) {
+    return (
+      <View style={[styles.centered, { backgroundColor: "#000" }]}>
+        <StatusBar style="light" hidden={false} />
+        <ActivityIndicator color="#0d9488" size="large" />
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.container, { paddingTop: Platform.OS === "web" ? 67 : 0 }]}>
+      <StatusBar style="light" hidden={false} />
+
+      {/* Fullscreen Modal */}
+      <Modal
+        visible={isFullscreen}
+        statusBarTranslucent
+        animationType="fade"
+        supportedOrientations={["portrait", "landscape", "landscape-left", "landscape-right"]}
+        onRequestClose={toggleFullscreen}
+      >
+        <StatusBar style="light" hidden />
+        <View style={styles.fullscreenContainer}>
+          <View style={styles.fullscreenVideo} {...panResponder.panHandlers}>
+            {videoUri ? (
+              <VideoView
+                ref={videoRef}
+                player={player}
+                style={StyleSheet.absoluteFill}
+                contentFit="contain"
+                nativeControls={false}
+              />
+            ) : (
+              <View style={[StyleSheet.absoluteFill, styles.noVideo]}>
+                <Ionicons name="play-circle-outline" size={64} color="rgba(255,255,255,0.3)" />
+              </View>
+            )}
+            <VideoOverlay fullscreen />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Normal video section */}
+      <View style={styles.videoWrap} {...panResponder.panHandlers}>
+        {videoUri ? (
+          <VideoView
+            ref={videoRef}
+            player={player}
+            style={styles.video}
+            contentFit="contain"
+            nativeControls={false}
+          />
+        ) : (
+          <View style={[styles.video, styles.noVideo]}>
+            <Ionicons name="play-circle-outline" size={64} color="rgba(255,255,255,0.3)" />
+            <Text style={styles.noVideoText}>
+              {episodes.length === 0 ? "Episode belum tersedia" : "Pilih episode"}
+            </Text>
+          </View>
         )}
-        {epIndex < episodes.length - 1 && (
-          <Pressable style={[styles.navArrow, styles.navRight]} onPress={() => goEp(epIndex + 1)}>
-            <Ionicons name="chevron-forward" size={22} color="#fff" />
-          </Pressable>
-        )}
+        <VideoOverlay />
       </View>
 
       {/* Resume bar */}
@@ -253,23 +340,34 @@ const styles = StyleSheet.create({
   noVideoText: { color: "rgba(255,255,255,0.4)", fontSize: 14, fontFamily: "Inter_400Regular" },
 
   videoHeader: {
-    ...StyleSheet.absoluteFillObject,
-    height: 80, flexDirection: "row",
+    position: "absolute", top: 0, left: 0, right: 0,
+    height: 90, flexDirection: "row",
     alignItems: "flex-start", paddingTop: 12,
-    paddingHorizontal: 14, gap: 12, bottom: "auto",
+    paddingHorizontal: 14, gap: 12,
+  },
+  videoFooter: {
+    position: "absolute", bottom: 0, left: 0, right: 0,
+    height: 56, flexDirection: "row",
+    alignItems: "center", paddingHorizontal: 14, gap: 8,
+  },
+  footerBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.4)",
   },
   backBtn: { marginTop: 2 },
   headerCenter: { flex: 1 },
   headerTitle: { color: "#fff", fontSize: 14, fontFamily: "Inter_600SemiBold" },
   headerEp: { color: "rgba(255,255,255,0.65)", fontSize: 12, fontFamily: "Inter_400Regular" },
 
-  navArrow: {
-    position: "absolute", top: "50%", marginTop: -20,
-    width: 36, height: 40, alignItems: "center", justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.4)", borderRadius: 8,
+  fullscreenContainer: {
+    flex: 1, backgroundColor: "#000",
+    alignItems: "center", justifyContent: "center",
   },
-  navLeft: { left: 8 },
-  navRight: { right: 8 },
+  fullscreenVideo: {
+    width: "100%", height: "100%",
+    position: "relative",
+  },
 
   resumeBar: {
     flexDirection: "row", alignItems: "center", gap: 10,
