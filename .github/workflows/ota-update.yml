@@ -1,6 +1,9 @@
 name: EAS OTA Update
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       channel:
@@ -42,5 +45,6 @@ jobs:
 
       - name: Publish OTA Update
         run: |
-          MSG="${{ github.event.inputs.message }} (commit ${{ github.sha }})"
-          eas update --channel ${{ github.event.inputs.channel }} --message "$MSG" --non-interactive
+          CHANNEL=${{ github.event.inputs.channel || 'preview' }}
+          MSG="${{ github.event.inputs.message || 'OTA update' }} — commit ${{ github.sha }}"
+          eas update --channel $CHANNEL --message "$MSG" --non-interactive

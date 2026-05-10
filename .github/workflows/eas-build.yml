@@ -1,9 +1,6 @@
 name: EAS Build APK
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       profile:
@@ -40,10 +37,5 @@ jobs:
 
       - name: Build Android APK
         run: |
-          PROFILE=${{ github.event.inputs.profile || 'preview' }}
+          PROFILE=${{ github.event.inputs.profile }}
           eas build --platform android --profile $PROFILE --non-interactive
-
-      - name: Publish OTA Update
-        run: |
-          PROFILE=${{ github.event.inputs.profile || 'preview' }}
-          eas update --channel $PROFILE --message "OTA update from commit ${{ github.sha }}" --non-interactive
