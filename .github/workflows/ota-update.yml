@@ -1,23 +1,25 @@
-name: EAS Build APK
+name: EAS OTA Update
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
-      profile:
-        description: 'Build profile (preview or production)'
+      channel:
+        description: 'Update channel'
         required: true
         default: 'preview'
         type: choice
         options:
           - preview
           - production
+          - development
+      message:
+        description: 'Update message / changelog'
+        required: false
+        default: 'OTA update'
 
 jobs:
-  build:
-    name: Build Android APK
+  update:
+    name: Publish OTA Update
     runs-on: ubuntu-latest
 
     steps:
@@ -38,12 +40,7 @@ jobs:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Build Android APK
-        run: |
-          PROFILE=${{ github.event.inputs.profile || 'preview' }}
-          eas build --platform android --profile $PROFILE --non-interactive
-
       - name: Publish OTA Update
         run: |
-          PROFILE=${{ github.event.inputs.profile || 'preview' }}
-          eas update --channel $PROFILE --message "OTA update from commit ${{ github.sha }}" --non-interactive
+          MSG="${{ github.event.inputs.message }} (commit ${{ github.sha }})"
+          eas update --channel ${{ github.event.inputs.channel }} --message "$MSG" --non-interactive
